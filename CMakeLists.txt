@@ -634,8 +634,10 @@ if (WITH_CUDA)
       NAMES thrust/version.h
       HINTS
         ${CUDA_TOOLKIT_ROOT_DIR}/targets/${CMAKE_SYSTEM_PROCESSOR}-linux/include/cccl
-        ${CUDA_TOOLKIT_ROOT_DIR}/include/cccl
         ${CUDA_TOOLKIT_ROOT_DIR}/targets/x86_64-linux/include/cccl
+        ${CUDA_TOOLKIT_ROOT_DIR}/targets/x64-windows/include/cccl
+        ${CUDA_TOOLKIT_ROOT_DIR}/targets/x86_64-windows/include/cccl
+        ${CUDA_TOOLKIT_ROOT_DIR}/include/cccl
     )
     if(CCCL_INCLUDE_DIR)
       message(STATUS "Found CCCL include directory: ${CCCL_INCLUDE_DIR}")

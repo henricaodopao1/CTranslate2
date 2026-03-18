@@ -151,29 +151,21 @@ namespace cub {
   template <> struct FpLimits<__half> {
     static __host__ __device__ __forceinline__ __half Lowest() {
       unsigned short lowest_word = 0xFBFF;  // -65504
-      __half h;
-      memcpy(&h, &lowest_word, sizeof(h));
-      return h;
+      return reinterpret_cast<__half&>(lowest_word);
     }
     static __host__ __device__ __forceinline__ __half Max() {
       unsigned short max_word = 0x7BFF;  // 65504
-      __half h;
-      memcpy(&h, &max_word, sizeof(h));
-      return h;
+      return reinterpret_cast<__half&>(max_word);
     }
   };
   template <> struct FpLimits<__nv_bfloat16> {
     static __host__ __device__ __forceinline__ __nv_bfloat16 Lowest() {
       unsigned short lowest_word = 0xFF7F;
-      __nv_bfloat16 h;
-      memcpy(&h, &lowest_word, sizeof(h));
-      return h;
+      return reinterpret_cast<__nv_bfloat16&>(lowest_word);
     }
     static __host__ __device__ __forceinline__ __nv_bfloat16 Max() {
       unsigned short max_word = 0x7F7F;
-      __nv_bfloat16 h;
-      memcpy(&h, &max_word, sizeof(h));
-      return h;
+      return reinterpret_cast<__nv_bfloat16&>(max_word);
     }
   };
 }
