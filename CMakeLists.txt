@@ -539,21 +539,40 @@ if (WITH_CUDA)
     if(CUDA_VERSION_MAJOR EQUAL 11)
       list(INSERT CUDA_ARCH_LIST 0 "3.5" "5.0")
     endif()
-    # CUDA 13 dropped offline compilation for SM < 7.5 (Maxwell, Pascal, Volta).
-    # Filter out any unsupported architectures.
+  elseif(CUDA_ARCH_LIST STREQUAL "All")
     if(CUDA_VERSION_MAJOR GREATER_EQUAL 13)
-      set(_filtered_archs)
-      foreach(_arch ${CUDA_ARCH_LIST})
-        # Convert arch string to a comparable number (e.g. "7.5" -> 75, "8.0" -> 80)
-        string(REPLACE "." "" _arch_num ${_arch})
-        if(_arch_num GREATER_EQUAL 75)
-          list(APPEND _filtered_archs ${_arch})
-        else()
-          message(STATUS "Skipping unsupported architecture ${_arch} for CUDA ${CUDA_VERSION_MAJOR}")
-        endif()
-      endforeach()
-      set(CUDA_ARCH_LIST ${_filtered_archs})
+      # For CUDA 13+, "All" should match the manual broad arch set below.
+      set(CUDA_ARCH_LIST "Auto")
+    else()
+      set(CUDA_ARCH_LIST ${CUDA_ALL_GPU_ARCHITECTURES})
     endif()
+  endif()
+
+  # CUDA 13 dropped offline compilation for SM < 7.5 (Maxwell, Pascal, Volta).
+  # Filter any explicit list, regardless of how it was specified.
+  if(CUDA_VERSION_MAJOR GREATER_EQUAL 13 AND NOT CUDA_ARCH_LIST STREQUAL "Auto")
+    set(_filtered_archs)
+    foreach(_arch ${CUDA_ARCH_LIST})
+      # Convert arch string to a comparable number (e.g. "7.5" -> 75, "8.0" -> 80)
+      string(REPLACE "." "" _arch_num ${_arch})
+      if(_arch_num MATCHES "^[0-9]+$" AND _arch_num GREATER_EQUAL 75)
+        list(APPEND _filtered_archs ${_arch})
+      elseif(_arch_num MATCHES "^[0-9]+$")
+        message(STATUS "Skipping unsupported architecture ${_arch} for CUDA ${CUDA_VERSION_MAJOR}")
+      else()
+        message(FATAL_ERROR
+          "Unsupported CUDA_ARCH_LIST entry '${_arch}' for CUDA ${CUDA_VERSION_MAJOR}. "
+          "Use Auto, Common, All, or explicit compute capabilities such as 7.5;8.0;8.9.")
+      endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _filtered_archs)
+    if(NOT _filtered_archs)
+      message(FATAL_ERROR
+        "CUDA ${CUDA_VERSION_MAJOR} requires compute capability 7.5 or higher, "
+        "but CUDA_ARCH_LIST='${CUDA_ARCH_LIST}' did not contain any supported architecture.")
+    endif()
+    set(CUDA_ARCH_LIST ${_filtered_archs})
+  else()
     list(REMOVE_DUPLICATES CUDA_ARCH_LIST)
   endif()
 
