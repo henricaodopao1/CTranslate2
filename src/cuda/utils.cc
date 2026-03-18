@@ -221,6 +221,11 @@ namespace ctranslate2 {
 
     // See docs.nvidia.com/deeplearning/sdk/tensorrt-support-matrix/index.html
     // for hardware support of reduced precision.
+    //
+    // Note: CUDA 13+ only supports SM >= 7.5 (Turing+), so some of these checks
+    // are always true when compiled against CUDA 13. We keep the runtime checks
+    // for backward compatibility with binaries that might use CUDA_DYNAMIC_LOADING
+    // against an older driver.
 
     bool gpu_supports_int8(int device) {
       const cudaDeviceProp& device_prop = get_device_properties(device);

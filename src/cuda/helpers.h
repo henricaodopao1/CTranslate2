@@ -12,6 +12,11 @@
 #else
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
+#include <thrust/iterator/permutation_iterator.h>
+#include <thrust/transform.h>
+#include <thrust/copy.h>
 #endif
 
 #include "ctranslate2/types.h"
@@ -166,6 +171,14 @@ namespace ctranslate2 {
     };
 
     // Some functional operators, similar to the ones from Thrust.
+
+    // thrust::identity was removed in CCCL (CUDA 13+). Provide our own.
+    template <typename T>
+    struct identity {
+      __device__ T operator()(const T& x) const {
+        return x;
+      }
+    };
 
     template <typename T>
     struct plus {

@@ -496,6 +496,10 @@ if (WITH_CUDA)
     message(FATAL_ERROR "WITH_CUDA=ON incompatible with WITH_HIP=ON")
   endif()
   find_package(CUDA 11.0 REQUIRED)
+
+  if(CUDA_VERSION_MAJOR GREATER_EQUAL 13)
+    message(STATUS "CUDA 13+ detected — minimum compute capability is 7.5 (Turing)")
+  endif()
   list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
   if (WITH_TENSOR_PARALLEL)
     find_package(MPI REQUIRED)
@@ -535,10 +539,59 @@ if (WITH_CUDA)
     if(CUDA_VERSION_MAJOR EQUAL 11)
       list(INSERT CUDA_ARCH_LIST 0 "3.5" "5.0")
     endif()
+    # CUDA 13 dropped offline compilation for SM < 7.5 (Maxwell, Pascal, Volta).
+    # Filter out any unsupported architectures.
+    if(CUDA_VERSION_MAJOR GREATER_EQUAL 13)
+      set(_filtered_archs)
+      foreach(_arch ${CUDA_ARCH_LIST})
+        # Convert arch string to a comparable number (e.g. "7.5" -> 75, "8.0" -> 80)
+        string(REPLACE "." "" _arch_num ${_arch})
+        if(_arch_num GREATER_EQUAL 75)
+          list(APPEND _filtered_archs ${_arch})
+        else()
+          message(STATUS "Skipping unsupported architecture ${_arch} for CUDA ${CUDA_VERSION_MAJOR}")
+        endif()
+      endforeach()
+      set(CUDA_ARCH_LIST ${_filtered_archs})
+    endif()
     list(REMOVE_DUPLICATES CUDA_ARCH_LIST)
   endif()
 
-  cuda_select_nvcc_arch_flags(ARCH_FLAGS ${CUDA_ARCH_LIST})
+  # CMake's legacy FindCUDA cuda_select_nvcc_arch_flags may not recognize
+  # architectures from newer CUDA toolkits (e.g. Blackwell SM 100 in CUDA 13).
+  # It can even FATAL_ERROR on unknown architectures. For CUDA 13+, we bypass
+  # the legacy function entirely and construct arch flags manually.
+  if(CUDA_VERSION_MAJOR GREATER_EQUAL 13)
+    if(CUDA_ARCH_LIST STREQUAL "Auto")
+      # "Auto" with CUDA 13+: target a broad set of supported architectures.
+      # Turing (7.5), Ampere (8.0, 8.6), Ada Lovelace (8.9), Hopper (9.0), Blackwell (10.0)
+      message(STATUS "CUDA 13+ Auto mode — targeting all supported architectures (SM 7.5-10.0)")
+      set(ARCH_FLAGS
+        -gencode arch=compute_75,code=sm_75
+        -gencode arch=compute_80,code=sm_80
+        -gencode arch=compute_86,code=sm_86
+        -gencode arch=compute_89,code=sm_89
+        -gencode arch=compute_90,code=sm_90
+        -gencode arch=compute_100,code=sm_100
+        -gencode arch=compute_100,code=compute_100
+      )
+    else()
+      # Explicit arch list with CUDA 13+: build gencode flags from the filtered list.
+      set(ARCH_FLAGS)
+      foreach(_arch ${CUDA_ARCH_LIST})
+        string(REPLACE "." "" _arch_num ${_arch})
+        list(APPEND ARCH_FLAGS
+          -gencode arch=compute_${_arch_num},code=sm_${_arch_num})
+      endforeach()
+      # Add PTX for the highest architecture for forward compatibility.
+      list(GET CUDA_ARCH_LIST -1 _highest_arch)
+      string(REPLACE "." "" _highest_arch_num ${_highest_arch})
+      list(APPEND ARCH_FLAGS
+        -gencode arch=compute_${_highest_arch_num},code=compute_${_highest_arch_num})
+    endif()
+  else()
+    cuda_select_nvcc_arch_flags(ARCH_FLAGS ${CUDA_ARCH_LIST})
+  endif()
   list(APPEND CUDA_NVCC_FLAGS ${ARCH_FLAGS})
   set(CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
 
@@ -551,16 +604,42 @@ if (WITH_CUDA)
   message(STATUS "NVCC host compiler: ${CUDA_HOST_COMPILER}")
   message(STATUS "NVCC compilation flags: ${CUDA_NVCC_FLAGS}")
 
-  # We should ensure that the Thrust include directories appear before
-  # -I/usr/local/cuda/include for both GCC and NVCC, so that the headers
-  # are coming from the submodule and not the system.
-  set(THRUST_INCLUDE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/thrust/dependencies/cub
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/thrust
+  # CUDA 13+ bundles Thrust and CUB as part of CCCL (CUDA C++ Core Libraries).
+  # Headers moved from <toolkit>/include/thrust/ to <toolkit>/include/cccl/thrust/.
+  # We must add the cccl/ directory to the include path so that #include <thrust/...>
+  # and #include <cub/...> resolve correctly.
+  if(CUDA_VERSION_MAJOR GREATER_EQUAL 13)
+    message(STATUS "Using system Thrust/CUB from CUDA toolkit CCCL (>= 13)")
+    # Find the cccl include directory. It's typically under the target-specific include path.
+    find_path(CCCL_INCLUDE_DIR
+      NAMES thrust/version.h
+      HINTS
+        ${CUDA_TOOLKIT_ROOT_DIR}/targets/${CMAKE_SYSTEM_PROCESSOR}-linux/include/cccl
+        ${CUDA_TOOLKIT_ROOT_DIR}/include/cccl
+        ${CUDA_TOOLKIT_ROOT_DIR}/targets/x86_64-linux/include/cccl
     )
-  cuda_include_directories(${THRUST_INCLUDE_DIRS})
-  list(APPEND PRIVATE_INCLUDE_DIRECTORIES ${THRUST_INCLUDE_DIRS})
+    if(CCCL_INCLUDE_DIR)
+      message(STATUS "Found CCCL include directory: ${CCCL_INCLUDE_DIR}")
+      cuda_include_directories(${CCCL_INCLUDE_DIR})
+      list(APPEND PRIVATE_INCLUDE_DIRECTORIES ${CCCL_INCLUDE_DIR})
+    else()
+      message(WARNING "CCCL include directory not found — Thrust/CUB headers may not be available")
+    endif()
+  else()
+    # For CUDA 11/12, ensure that the Thrust include directories appear before
+    # -I/usr/local/cuda/include for both GCC and NVCC, so that the headers
+    # are coming from the submodule and not the system.
+    set(THRUST_INCLUDE_DIRS
+      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/thrust/dependencies/cub
+      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/thrust
+      )
+    cuda_include_directories(${THRUST_INCLUDE_DIRS})
+    list(APPEND PRIVATE_INCLUDE_DIRECTORIES ${THRUST_INCLUDE_DIRS})
+  endif()
 
+  # CUTLASS headers are used for Flash Attention kernels (half_t, bfloat16_t, Array, etc.)
+  # The bundled CUTLASS 3.4.1 should compile with CUDA 13, but if you encounter issues
+  # with newer CUDA toolkits, update the submodule to CUTLASS >= 3.6 or 4.x.
   set(CUTLASS_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cutlass/include
   )

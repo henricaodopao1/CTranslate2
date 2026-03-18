@@ -27,6 +27,9 @@
 #else
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include <thrust/extrema.h>
+#include <thrust/reduce.h>
+#include <thrust/fill.h>
 #endif
 #include <thrust/device_ptr.h>
 

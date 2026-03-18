@@ -136,6 +136,48 @@ namespace hipcub {
 }
 #else
 #include <cub/block/block_reduce.cuh>
+
+// cub::FpLimits was removed in CCCL (CUDA 13+). Provide a compatibility shim.
+#if CUDA_VERSION >= 13000
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
+#include <cfloat>
+namespace cub {
+  template <typename T> struct FpLimits;
+  template <> struct FpLimits<float> {
+    static __host__ __device__ __forceinline__ float Lowest() { return -FLT_MAX; }
+    static __host__ __device__ __forceinline__ float Max() { return FLT_MAX; }
+  };
+  template <> struct FpLimits<__half> {
+    static __host__ __device__ __forceinline__ __half Lowest() {
+      unsigned short lowest_word = 0xFBFF;  // -65504
+      __half h;
+      memcpy(&h, &lowest_word, sizeof(h));
+      return h;
+    }
+    static __host__ __device__ __forceinline__ __half Max() {
+      unsigned short max_word = 0x7BFF;  // 65504
+      __half h;
+      memcpy(&h, &max_word, sizeof(h));
+      return h;
+    }
+  };
+  template <> struct FpLimits<__nv_bfloat16> {
+    static __host__ __device__ __forceinline__ __nv_bfloat16 Lowest() {
+      unsigned short lowest_word = 0xFF7F;
+      __nv_bfloat16 h;
+      memcpy(&h, &lowest_word, sizeof(h));
+      return h;
+    }
+    static __host__ __device__ __forceinline__ __nv_bfloat16 Max() {
+      unsigned short max_word = 0x7F7F;
+      __nv_bfloat16 h;
+      memcpy(&h, &max_word, sizeof(h));
+      return h;
+    }
+  };
+}
+#endif
 #endif
 
 namespace fastertransformer {
